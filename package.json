@@ -1,0 +1,107 @@
+{
+  "activationEvents": [
+    "onCommand:findUnused.find",
+    "onCommand:findUnused.delete"
+  ],
+  "categories": [
+    "Other"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "category": "findUnused",
+        "command": "findUnused.find",
+        "title": "findUnused find"
+      },
+      {
+        "category": "findUnused",
+        "command": "findUnused.delete",
+        "title": "findUnused delete"
+      }
+    ],
+    "configuration": {
+      "properties": {
+        "findUnused.ignore": {
+          "default": [
+            ".eslintrc",
+            ".git",
+            ".gitignore",
+            ".vscode",
+            "gulp.json",
+            "node_modules",
+            "package-lock.json",
+            "package.json",
+            "unused.md",
+            "webpack.config.js"
+          ],
+          "description": "The files and folders that you want to ignore when checking,add more types you need.",
+          "type": "array"
+        },
+        "findUnused.static": {
+          "default": [
+            ".aac",
+            ".apng",
+            ".bmp",
+            ".cur",
+            ".gif",
+            ".ico",
+            ".jfif",
+            ".jpeg",
+            ".jpg",
+            ".m4a",
+            ".mp3",
+            ".pjp",
+            ".pjpeg",
+            ".png",
+            ".svg",
+            ".wav",
+            ".webp"
+          ],
+          "description": "The file types that is a statics file,add more types you need.",
+          "type": "array"
+        },
+        "findUnused.staticIn": {
+          "default": [
+            ".css",
+            ".html",
+            ".js",
+            ".json",
+            ".jsp",
+            ".jsx",
+            ".less",
+            ".less",
+            ".sass",
+            ".scss",
+            ".vue",
+            ".wxml",
+            ".wxs",
+            ".wxss"
+          ],
+          "description": "The file types that the statics may in,add more types you need.",
+          "type": "array"
+        }
+      },
+      "title": "Find Unused configuration",
+      "type": "object"
+    }
+  },
+  "dependencies": {
+    "@wujianfu/scan-dir-sync": "^1.0.0",
+    "fs-extra": "^9.0.0",
+    "node-dir": "^0.1.17"
+  },
+  "description": "Find unused static resource, and delete them. ",
+  "devDependencies": {
+    "@types/node": "^12.11.7",
+    "@types/vscode": "^1.41.0"
+  },
+  "displayName": "Find Unused",
+  "engines": {
+    "vscode": "^1.44.2"
+  },
+  "main": "./extension.js",
+  "name": "find-unused",
+  "publisher": "wjf",
+  "scripts": {},
+  "version": "0.0.5"
+}
