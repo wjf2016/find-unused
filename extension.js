@@ -20,7 +20,7 @@ function findFile() {
     },
     (progress, token) => {
       const basePath = vscode.workspace.workspaceFolders[0].uri.fsPath; // 扫描目录
-      const unusedTxt = path.join(basePath, 'unused.txt');
+      const unusedJson = path.join(basePath, 'unused.json');
       const message = '正在查找未使用的静态资源文件，请稍等...';
       let progressFlag = true;
 
@@ -104,22 +104,41 @@ function findFile() {
             }
 
             if (unused) {
-              unusedArr.push(staticFile);
+              unusedArr.push({
+                path: staticFile,
+                size: fs.statSync(staticFile).size,
+              });
             }
           }
+
+          const totalSize = formatSize(
+            unusedArr.reduce((prev, next) => {
+              return prev + next.size;
+            }, 0),
+          );
+
+          unusedArr.sort((a, b) => {
+            return b.size - a.size;
+          });
+
+          unusedArr.forEach((item) => {
+            item.size = formatSize(item.size);
+          });
 
           progress.report({
             increment: 34,
           });
 
-          console.log(`找到未使用的静态资源文件共${unusedArr.length}个`);
-
           // 写入文件
-          fs.writeFileSync(unusedTxt, unusedArr.join('\n'));
+          fs.writeFileSync(unusedJson, JSON.stringify(unusedArr, null, 2));
+
+          vscode.window.showInformationMessage(
+            `找到未使用的静态资源文件共${unusedArr.length}个，总体积为：${totalSize}`,
+          );
 
           // 打开文件
           vscode.workspace
-            .openTextDocument(vscode.Uri.file(unusedTxt))
+            .openTextDocument(vscode.Uri.file(unusedJson))
             .then((doc) => vscode.window.showTextDocument(doc));
 
           resolve();
@@ -139,34 +158,59 @@ function deleteFile() {
   }
 
   const basePath = vscode.workspace.workspaceFolders[0].uri.fsPath;
-  const unusedTxt = path.join(basePath, 'unused.txt');
+  const unusedJson = path.join(basePath, 'unused.json');
 
-  if (!fs.pathExistsSync(unusedTxt)) {
-    vscode.window.showErrorMessage('There is no file named unused.txt!');
+  if (!fs.pathExistsSync(unusedJson)) {
+    vscode.window.showErrorMessage('There is no file named unused.json!');
     return;
   }
 
   vscode.window
     .showInputBox({
       prompt:
-        "Find Unused: Please enter 'yes' to delete file list in unused.txt. (Please make a backup before you do this.)",
+        "Find Unused: Please enter 'yes' to delete file list in unused.json. (Please make a backup before you do this.)",
     })
     .then(function (answer) {
       if (answer === 'yes') {
-        const fileContentArr = fs.readFileSync(unusedTxt, 'utf-8').split('\n');
+        const fileContentArr = JSON.parse(fs.readFileSync(unusedJson, 'utf-8'));
 
         fileContentArr.forEach((file) => {
-          if (fs.pathExistsSync(file)) {
-            fs.removeSync(file);
+          if (fs.pathExistsSync(file.path)) {
+            fs.removeSync(file.path);
           }
         });
 
-        fs.removeSync(unusedTxt);
+        fs.removeSync(unusedJson);
         vscode.window.showInformationMessage(
-          'Deleted all files in unused.txt.',
+          'Deleted all files in unused.json.',
         );
       }
     });
+}
+
+// 格式化大小
+function formatSize(size) {
+  const maxMb = 1024 * 1024 * 1024;
+  const maxKb = 1024 * 1024;
+
+  size = parseInt(size);
+
+  // 大于等于1024Mb时
+  if (size >= maxMb) {
+    return `${(size / maxMb).toFixed(2)}G`;
+  }
+
+  // 大于等于1024Kb时
+  if (size >= maxKb) {
+    return `${(size / maxKb).toFixed(2)}M`;
+  }
+
+  // 大于等于1024b时
+  if (size >= 1024) {
+    return `${(size / 1024).toFixed(2)}Kb`;
+  }
+
+  return `${size}b`;
 }
 
 function activate() {
