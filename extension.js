@@ -1,7 +1,11 @@
 const fs = require('fs-extra');
 const path = require('path');
-const scanDirSync = require('@wujianfu/scan-dir-sync');
+const os = require('os');
+const { spawn } = require('child_process');
 const vscode = require('vscode');
+const Queue = require('queue');
+const scanDirSync = require('@wujianfu/scan-dir-sync');
+const rgPath = path.join(path.dirname(__filename), './bin/rg.exe');
 
 // 查找文件
 function findFile() {
@@ -78,11 +82,138 @@ function findFile() {
           increment: 33,
         });
 
+        const totalCount = staticArr.length;
+        let currentCount = 0;
+        let lastPercent = 0;
+        const unusedArr = []; // 未使用的静态资源文件列表
+
+        if (os.type() === 'Windows_NT') {
+          const rgResult = [];
+          // Windows系统下使用rg命令快速全文搜索
+          const queue = Queue({
+            concurrency: 2,
+            results: rgResult,
+          });
+
+          staticArr.forEach((staticFile) => {
+            const fileName = path.basename(staticFile);
+            const ignoreStr = ignore.reduce((prev, next) => {
+              return `${prev}-g "!${next}" `;
+            }, '');
+            const staticInStr = staticIn.reduce((prev, next) => {
+              return `${prev}-g "*${next}" `;
+            }, '');
+
+            const args = `"${fileName}" "${basePath}" -i --hidden --count-matches --no-filename ${ignoreStr} ${staticInStr}`;
+            const argsArr = args.split(' ');
+
+            console.log(staticFile);
+
+            /* queue.push(function () {
+              return new Promise((resolve, reject) => {
+                spawnPromise(`"${rgPath}"`, argsArr, {
+                  shell: true,
+                })
+                  .then((res) => {
+                    console.log(res);
+                    const { stdout, stderr, code } = res;
+
+                    if (code === 1 && !stdout && !stderr) {
+                      // 全文搜索未找到fileName（即文件未被引用时）
+                      unusedArr.push({
+                        path: staticFile,
+                        size: fs.statSync(staticFile).size,
+                      });
+                    }
+
+                    resolve(res);
+                  })
+                  .catch((err) => {
+                    reject(err);
+                  })
+                  .finally(() => {
+                    currentCount++;
+                  });
+              });
+            }); */
+          });
+
+          // 报告进度
+          const interval = setInterval(() => {
+            const percent = parseInt((currentCount / totalCount) * 100);
+
+            progress.report({
+              increment: percent - lastPercent,
+            });
+
+            lastPercent = percent;
+          }, 500);
+
+          // get notified when jobs complete
+          queue.on('success', function (result, job) {
+            console.log(
+              'job finished processing:',
+              job.toString().replace(/\n/g, ''),
+            );
+          });
+
+          // After all jobs have been processed
+          queue.on('end', (err) => {
+            if (err) {
+              console.log(err);
+              return;
+            }
+
+            console.log('完成了');
+          });
+
+          // begin processing, get notified on end / failure
+          queue.start(function (err) {
+            // 有错误发生时
+            if (err) {
+              console.log(err);
+              return;
+            }
+
+            // 队列为空时
+            console.log('all done:', results);
+
+            clearInterval(interval);
+
+            const totalSize = formatSize(
+              unusedArr.reduce((prev, next) => {
+                return prev + next.size;
+              }, 0),
+            );
+
+            unusedArr.sort((a, b) => {
+              return b.size - a.size;
+            });
+
+            unusedArr.forEach((item) => {
+              item.size = formatSize(item.size);
+            });
+
+            // 写入文件
+            fs.writeFileSync(unusedJson, JSON.stringify(unusedArr, null, 2));
+
+            vscode.window.showInformationMessage(
+              `找到未使用的静态资源文件共${unusedArr.length}个，总体积为：${totalSize}`,
+            );
+
+            // 打开文件
+            vscode.workspace
+              .openTextDocument(vscode.Uri.file(unusedJson))
+              .then((doc) => vscode.window.showTextDocument(doc));
+
+            resolve();
+          });
+
+          return;
+        }
+
         // 由于查找时间较长，这里使用异步方法执行，避免ui卡死
         setTimeout(() => {
-          // 查找未使用的静态资源文件
-          const unusedArr = [];
-
           for (let staticFile of staticArr) {
             if (!progressFlag) {
               return;
@@ -211,6 +342,45 @@ function formatSize(size) {
   }
 
   return `${size}b`;
+}
+
+// 执行子进程命令
+function spawnPromise(command, args = [], options = {}) {
+  return new Promise((resolve, reject) => {
+    let stdout = '';
+    let stderr = '';
+
+    const commandSpawn = spawn(
+      command,
+      args,
+      Object.assign(
+        {
+          shell: true, // If true, runs command inside of a shell. Uses '/bin/sh' on Unix, and process.env.ComSpec on Windows. A different shell can be specified as a string. See Shell Requirements and Default Windows Shell. Default: false (no shell)
+        },
+        options,
+      ),
+    );
+
+    commandSpawn.stdout.on('data', (data) => {
+      stdout = `${stdout}${data}`;
+    });
+
+    commandSpawn.stderr.on('data', (data) => {
+      stderr = `${stderr}${data}`;
+    });
+
+    commandSpawn.on('close', (code) => {
+      resolve({
+        stdout,
+        stderr,
+        code,
+      });
+    });
+
+    commandSpawn.on('error', (error) => {
+      reject(error);
+    });
+  });
 }
 
 function activate() {
