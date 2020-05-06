@@ -16,7 +16,6 @@ new Array(20).fill(null).forEach((item, index) => {
   });
 });
 
-// begin processing, get notified on end / failure
 queue.start(function (err) {
   // 有错误发生时
   if (err) {

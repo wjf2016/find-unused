@@ -107,15 +107,12 @@ function findFile() {
             const args = `"${fileName}" "${basePath}" -i --hidden --count-matches --no-filename ${ignoreStr} ${staticInStr}`;
             const argsArr = args.split(' ');
 
-            console.log(staticFile);
-
-            /* queue.push(function () {
+            queue.push(function () {
               return new Promise((resolve, reject) => {
                 spawnPromise(`"${rgPath}"`, argsArr, {
                   shell: true,
                 })
                   .then((res) => {
-                    console.log(res);
                     const { stdout, stderr, code } = res;
 
                     if (code === 1 && !stdout && !stderr) {
@@ -135,7 +132,7 @@ function findFile() {
                     currentCount++;
                   });
               });
-            }); */
+            });
           });
 
           // 报告进度
@@ -149,36 +146,16 @@ function findFile() {
             lastPercent = percent;
           }, 500);
 
-          // get notified when jobs complete
-          queue.on('success', function (result, job) {
-            console.log(
-              'job finished processing:',
-              job.toString().replace(/\n/g, ''),
-            );
-          });
-
-          // After all jobs have been processed
-          queue.on('end', (err) => {
-            if (err) {
-              console.log(err);
-              return;
-            }
-
-            console.log('完成了');
-          });
-
-          // begin processing, get notified on end / failure
           queue.start(function (err) {
             // 有错误发生时
             if (err) {
-              console.log(err);
+              console.error(err);
               return;
             }
 
-            // 队列为空时
-            console.log('all done:', results);
-
             clearInterval(interval);
+
+            console.log(unusedArr);
 
             const totalSize = formatSize(
               unusedArr.reduce((prev, next) => {

@@ -12,12 +12,12 @@
       {
         "category": "findUnused",
         "command": "findUnused.find",
-        "title": "findUnused find"
+        "title": "查找未引用的文件"
       },
       {
         "category": "findUnused",
         "command": "findUnused.delete",
-        "title": "findUnused delete"
+        "title": "删除未引用的文件"
       }
     ],
     "configuration": {
@@ -87,7 +87,6 @@
   "dependencies": {
     "@wujianfu/scan-dir-sync": "^1.0.0",
     "fs-extra": "^9.0.0",
-    "node-dir": "^0.1.17",
     "queue": "^6.0.1"
   },
   "description": "Find unused static resource, and delete them. ",
