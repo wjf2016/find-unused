@@ -23,6 +23,7 @@ function findFile() {
       cancellable: false,
     },
     (progress, token) => {
+      const startTime = Date.now();
       const basePath = vscode.workspace.workspaceFolders[0].uri.fsPath; // 扫描目录
       const unusedJson = path.join(basePath, 'unused.json');
       const message = '正在查找未使用的静态资源文件，请稍等...';
@@ -51,9 +52,11 @@ function findFile() {
           include: static.concat(staticIn),
         });
 
-        progress.report({
-          increment: 33,
-        });
+        if (os.type() !== 'Windows_NT') {
+          progress.report({
+            increment: 33,
+          });
+        }
 
         // 静态资源和非静态资源归类
         result.forEach((item) => {
@@ -78,9 +81,11 @@ function findFile() {
           }
         });
 
-        progress.report({
-          increment: 33,
-        });
+        if (os.type() !== 'Windows_NT') {
+          progress.report({
+            increment: 33,
+          });
+        }
 
         const totalCount = staticArr.length;
         let currentCount = 0;
@@ -91,7 +96,7 @@ function findFile() {
           const rgResult = [];
           // Windows系统下使用rg命令快速全文搜索
           const queue = Queue({
-            concurrency: 2,
+            concurrency: 5,
             results: rgResult,
           });
 
@@ -149,41 +154,13 @@ function findFile() {
           queue.start(function (err) {
             // 有错误发生时
             if (err) {
+              clearInterval(interval);
               console.error(err);
               return;
             }
 
             clearInterval(interval);
-
-            console.log(unusedArr);
-
-            const totalSize = formatSize(
-              unusedArr.reduce((prev, next) => {
-                return prev + next.size;
-              }, 0),
-            );
-
-            unusedArr.sort((a, b) => {
-              return b.size - a.size;
-            });
-
-            unusedArr.forEach((item) => {
-              item.size = formatSize(item.size);
-            });
-
-            // 写入文件
-            fs.writeFileSync(unusedJson, JSON.stringify(unusedArr, null, 2));
-
-            vscode.window.showInformationMessage(
-              `找到未使用的静态资源文件共${unusedArr.length}个，总体积为：${totalSize}`,
-            );
-
-            // 打开文件
-            vscode.workspace
-              .openTextDocument(vscode.Uri.file(unusedJson))
-              .then((doc) => vscode.window.showTextDocument(doc));
-
-            resolve();
+            calculateSize();
           });
 
           return;
@@ -217,8 +194,12 @@ function findFile() {
                 size: fs.statSync(staticFile).size,
               });
             }
-          }
 
+            calculateSize();
+          }
+        }, 500);
+
+        function calculateSize() {
           const totalSize = formatSize(
             unusedArr.reduce((prev, next) => {
               return prev + next.size;
@@ -233,15 +214,21 @@ function findFile() {
             item.size = formatSize(item.size);
           });
 
-          progress.report({
-            increment: 34,
-          });
+          if (os.type() !== 'Windows_NT') {
+            progress.report({
+              increment: 34,
+            });
+          }
 
           // 写入文件
           fs.writeFileSync(unusedJson, JSON.stringify(unusedArr, null, 2));
 
           vscode.window.showInformationMessage(
-            `找到未使用的静态资源文件共${unusedArr.length}个，总体积为：${totalSize}`,
+            `找到未使用的静态资源文件共${
+              unusedArr.length
+            }个，总体积为：${totalSize}，用时：${formatTime(
+              Date.now() - startTime,
+            )}`,
           );
 
           // 打开文件
@@ -250,7 +237,7 @@ function findFile() {
             .then((doc) => vscode.window.showTextDocument(doc));
 
           resolve();
-        }, 500);
+        }
       });
     },
   );
@@ -319,6 +306,61 @@ function formatSize(size) {
   }
 
   return `${size}b`;
+}
+
+// 格式化时间
+function formatTime(ms) {
+  const maxHour = 24 * 60 * 60 * 1000;
+  const maxMinute = 60 * 60 * 1000;
+  const maxSecond = 60 * 1000;
+  const maxMillisecond = 1000;
+  let day = 0;
+  let hour = 0;
+  let minute = 0;
+  let second = 0;
+  let millisecond = 0;
+  let remainder = 0;
+
+  // 计算天数
+  day = parseInt(ms / maxHour);
+  remainder = ms % maxHour;
+
+  if (remainder > 0) {
+    // 计算小时
+    hour = parseInt(remainder / maxMinute);
+    remainder %= maxMinute;
+
+    if (remainder > 0) {
+      // 计算分钟
+      minute = parseInt(remainder / maxSecond);
+      remainder %= maxSecond;
+
+      if (remainder > 0) {
+        // 计算秒数
+        second = parseInt(remainder / maxMillisecond);
+        remainder %= maxMillisecond;
+
+        // 计算毫秒数
+        millisecond = remainder;
+      }
+    }
+  }
+
+  day = day > 0 ? `${day}天` : '';
+  hour = hour > 0 ? `${hour}小时` : '';
+  minute = minute > 0 ? `${minute}分钟` : '';
+  second = second > 0 ? `${second}秒` : '';
+  millisecond = millisecond > 0 ? `${millisecond}ms` : '';
+
+  return `${day}${hour}${minute}${second}${millisecond}`;
+
+  return {
+    day,
+    hour,
+    minute,
+    second,
+    millisecond,
+  };
 }
 
 // 执行子进程命令
