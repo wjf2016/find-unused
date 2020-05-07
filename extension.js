@@ -1,17 +1,23 @@
 const fs = require('fs-extra');
+const fsPromises = require('fs').promises;
 const path = require('path');
 const os = require('os');
-const { spawn } = require('child_process');
+const { spawn, exec } = require('child_process');
 const vscode = require('vscode');
 const Queue = require('queue');
 const scanDirSync = require('@wujianfu/scan-dir-sync');
 const rgPath = path.join(path.dirname(__filename), './bin/rg.exe');
 
+// 调试用，固定使用rg命令或者使用node查找
+os.type = function () {
+  return '';
+};
+
 // 查找文件
 function findFile() {
   if (vscode.workspace.workspaceFolders.length > 1) {
     vscode.window.showErrorMessage(
-      'The extension only support one workspaceFolder for now.',
+      '此扩展只支持一个工作区目录，您的项目中含有多个工作区目录！',
     );
     return;
   }
@@ -20,16 +26,18 @@ function findFile() {
     {
       location: vscode.ProgressLocation.Notification,
       title: '',
-      cancellable: false,
+      cancellable: true,
     },
     (progress, token) => {
       const startTime = Date.now();
       const basePath = vscode.workspace.workspaceFolders[0].uri.fsPath; // 扫描目录
       const unusedJson = path.join(basePath, 'unused.json');
-      const message = '正在查找未使用的静态资源文件，请稍等...';
+      const message = '正在查找未使用的静态资源文件，请稍候...';
       let progressFlag = true;
+      let interval;
 
       token.onCancellationRequested(() => {
+        clearInterval(interval);
         progressFlag = false;
       });
 
@@ -40,23 +48,17 @@ function findFile() {
 
       return new Promise((resolve) => {
         const configuration = vscode.workspace.getConfiguration(); // 用户配置
-        const ignore = configuration.get('findUnused.ignore'); // 扫描忽略规则
+        const ignore = configuration.get('findUnused.ignore'); // 忽略的文件或目录
         const static = configuration.get('findUnused.static'); // 静态资源文件类型
         const staticIn = configuration.get('findUnused.staticIn'); // 引用静态资源的文件类型
         const staticArr = []; // 静态资源文件列表
         const staticInArr = []; // 引用静态资源的文件列表
 
-        // 开始扫描
+        // 开始扫描项目目录
         const result = scanDirSync(basePath, {
           ignore,
           include: static.concat(staticIn),
         });
-
-        if (os.type() !== 'Windows_NT') {
-          progress.report({
-            increment: 33,
-          });
-        }
 
         // 静态资源和非静态资源归类
         result.forEach((item) => {
@@ -81,144 +83,151 @@ function findFile() {
           }
         });
 
-        if (os.type() !== 'Windows_NT') {
-          progress.report({
-            increment: 33,
-          });
-        }
-
-        const totalCount = staticArr.length;
-        let currentCount = 0;
-        let lastPercent = 0;
+        const totalCount = staticArr.length; // 需要检查的文件总数
+        let currentCount = 0; // 当前已检查文件数
+        let lastPercent = 0; // 上次进度
         const unusedArr = []; // 未使用的静态资源文件列表
+        const rgResult = []; // 队列结果
+        const queue = Queue({
+          concurrency: 5,
+          results: rgResult,
+        }); // 创建队列对象
+
+        // 报告进度
+        interval = setInterval(() => {
+          const percent = parseInt((currentCount / totalCount) * 100);
+
+          progress.report({
+            increment: percent - lastPercent,
+          });
+
+          lastPercent = percent;
+        }, 500);
 
         if (os.type() === 'Windows_NT') {
-          const rgResult = [];
-          // Windows系统下使用rg命令快速全文搜索
-          const queue = Queue({
-            concurrency: 5,
-            results: rgResult,
-          });
-
+          // todo Windows系统下使用rg命令快速全文搜索，注：此种方式有bug，原因未查明，慎用！
           staticArr.forEach((staticFile) => {
             const fileName = path.basename(staticFile);
             const ignoreStr = ignore.reduce((prev, next) => {
               return `${prev}-g "!${next}" `;
-            }, '');
+            }, ''); // 忽略的目录或文件
             const staticInStr = staticIn.reduce((prev, next) => {
               return `${prev}-g "*${next}" `;
-            }, '');
+            }, ''); // 引用静态资源文件的文件类型
 
-            const args = `"${fileName}" "${basePath}" -i --hidden --count-matches --no-filename ${ignoreStr} ${staticInStr}`;
-            const argsArr = args.split(' ');
+            const args = `"${fileName}" "${basePath}" -i --hidden --count-matches --no-filename ${ignoreStr} ${staticInStr}`; // 参数字符串
+            const argsArr = args.split(' '); // 参数数组
 
             queue.push(function () {
+              // 用户取消时，清空队列
+              if (!progressFlag) {
+                queue.end();
+                return;
+              }
+
               return new Promise((resolve, reject) => {
-                spawnPromise(`"${rgPath}"`, argsArr, {
+                execPromise(`"${rgPath}" ${args}`, {
                   shell: true,
                 })
                   .then((res) => {
                     const { stdout, stderr, code } = res;
 
                     if (code === 1 && !stdout && !stderr) {
-                      // 全文搜索未找到fileName（即文件未被引用时）
+                      // 未使用时
                       unusedArr.push({
                         path: staticFile,
                         size: fs.statSync(staticFile).size,
                       });
                     }
 
-                    resolve(res);
+                    resolve(staticFile); // 表示队列中的某个任务已完成
                   })
                   .catch((err) => {
                     reject(err);
                   })
                   .finally(() => {
-                    currentCount++;
+                    currentCount++; // 设置已检查文件数量
                   });
               });
             });
           });
-
-          // 报告进度
-          const interval = setInterval(() => {
-            const percent = parseInt((currentCount / totalCount) * 100);
-
-            progress.report({
-              increment: percent - lastPercent,
-            });
-
-            lastPercent = percent;
-          }, 500);
-
-          queue.start(function (err) {
-            // 有错误发生时
-            if (err) {
-              clearInterval(interval);
-              console.error(err);
-              return;
-            }
-
-            clearInterval(interval);
-            calculateSize();
-          });
-
-          return;
-        }
-
-        // 由于查找时间较长，这里使用异步方法执行，避免ui卡死
-        setTimeout(() => {
-          for (let staticFile of staticArr) {
-            if (!progressFlag) {
-              return;
-            }
-
-            let unused = true;
-
-            for (let staticInFile of staticInArr) {
+        } else {
+          // 其它系统时，直接使用node查找
+          staticArr.forEach((staticFile) => {
+            queue.push(() => {
+              // 用户取消时，清空队列
               if (!progressFlag) {
+                queue.end();
                 return;
               }
 
-              const fileContent = fs.readFileSync(staticInFile, 'utf8');
+              return new Promise((resolve, reject) => {
+                const promiseArr = staticInArr.map((staticInFile) => {
+                  return fsPromises.readFile(staticInFile, 'utf8');
+                });
 
-              if (fileContent.includes(path.basename(staticFile))) {
-                unused = false;
-                break;
-              }
-            }
+                Promise.all(promiseArr)
+                  .then((res) => {
+                    let unused = true;
 
-            if (unused) {
-              unusedArr.push({
-                path: staticFile,
-                size: fs.statSync(staticFile).size,
+                    for (let fileContent of res) {
+                      if (fileContent.includes(path.basename(staticFile))) {
+                        unused = false; // 有使用时
+                        break;
+                      }
+                    }
+
+                    if (unused) {
+                      // 未使用时
+                      unusedArr.push({
+                        path: staticFile,
+                        size: fs.statSync(staticFile).size,
+                      });
+                    }
+
+                    resolve(staticFile); // 表示队列中的某个任务已完成
+                  })
+                  .catch((err) => {
+                    reject(err);
+                  })
+                  .finally(() => {
+                    currentCount++; // 设置已检查文件数量
+                  });
               });
-            }
+            });
+          });
+        }
 
-            calculateSize();
+        // 开始队列
+        queue.start(function (err) {
+          clearInterval(interval);
+
+          if (err) {
+            console.error(err);
+            return;
           }
-        }, 500);
 
-        function calculateSize() {
+          if (!progressFlag) {
+            console.error('用户取消，队列已清空！');
+            return;
+          }
+
+          // 计算未使用文件总体积
           const totalSize = formatSize(
             unusedArr.reduce((prev, next) => {
               return prev + next.size;
             }, 0),
           );
 
+          // 未使用文件按体积从大到小排序
           unusedArr.sort((a, b) => {
             return b.size - a.size;
           });
 
+          // 格式化未使用文件的体积
           unusedArr.forEach((item) => {
             item.size = formatSize(item.size);
           });
-
-          if (os.type() !== 'Windows_NT') {
-            progress.report({
-              increment: 34,
-            });
-          }
 
           // 写入文件
           fs.writeFileSync(unusedJson, JSON.stringify(unusedArr, null, 2));
@@ -236,8 +245,8 @@ function findFile() {
             .openTextDocument(vscode.Uri.file(unusedJson))
             .then((doc) => vscode.window.showTextDocument(doc));
 
-          resolve();
-        }
+          resolve(); // 关闭withProgress窗口
+        });
       });
     },
   );
@@ -247,7 +256,7 @@ function findFile() {
 function deleteFile() {
   if (vscode.workspace.workspaceFolders.length > 1) {
     vscode.window.showErrorMessage(
-      'The extension only support one workspaceFolder for now.',
+      '此扩展只支持一个工作区目录，您的项目中含有多个工作区目录！',
     );
     return;
   }
@@ -256,14 +265,14 @@ function deleteFile() {
   const unusedJson = path.join(basePath, 'unused.json');
 
   if (!fs.pathExistsSync(unusedJson)) {
-    vscode.window.showErrorMessage('There is no file named unused.json!');
+    vscode.window.showErrorMessage('项目根目录下未找到unused.json文件！');
     return;
   }
 
   vscode.window
     .showInputBox({
       prompt:
-        "Find Unused: Please enter 'yes' to delete file list in unused.json. (Please make a backup before you do this.)",
+        "Find Unused: 请输入'yes'来确认删除unused.json列表中的文件（在此操作前请自行备份好文件)",
     })
     .then(function (answer) {
       if (answer === 'yes') {
@@ -277,7 +286,7 @@ function deleteFile() {
 
         fs.removeSync(unusedJson);
         vscode.window.showInformationMessage(
-          'Deleted all files in unused.json.',
+          '已删除unused.json列表中的所有文件！',
         );
       }
     });
@@ -308,8 +317,12 @@ function formatSize(size) {
   return `${size}b`;
 }
 
-// 格式化时间
-function formatTime(ms) {
+/**
+ * 格式化时间
+ * @param {*} time 需要格式化的时间，单位为ms
+ * @returns
+ */
+function formatTime(time, outputType = 'String') {
   const maxHour = 24 * 60 * 60 * 1000;
   const maxMinute = 60 * 60 * 1000;
   const maxSecond = 60 * 1000;
@@ -322,8 +335,8 @@ function formatTime(ms) {
   let remainder = 0;
 
   // 计算天数
-  day = parseInt(ms / maxHour);
-  remainder = ms % maxHour;
+  day = parseInt(time / maxHour);
+  remainder = time % maxHour;
 
   if (remainder > 0) {
     // 计算小时
@@ -346,14 +359,22 @@ function formatTime(ms) {
     }
   }
 
-  day = day > 0 ? `${day}天` : '';
-  hour = hour > 0 ? `${hour}小时` : '';
-  minute = minute > 0 ? `${minute}分钟` : '';
-  second = second > 0 ? `${second}秒` : '';
-  millisecond = millisecond > 0 ? `${millisecond}ms` : '';
+  // 返回字符串
+  if ((outputType = 'String')) {
+    day = day > 0 ? `${day}天` : '';
+    hour = hour > 0 ? `${hour}小时` : '';
+    minute = minute > 0 ? `${minute}分钟` : '';
+    second = second > 0 ? `${second}秒` : '';
+    millisecond = millisecond > 0 ? `${millisecond}毫秒` : '';
 
-  return `${day}${hour}${minute}${second}${millisecond}`;
+    if (time >= 1000) {
+      return `${day}${hour}${minute}${second}`;
+    }
 
+    return `${day}${hour}${minute}${second}${millisecond}`;
+  }
+
+  // 返回对象
   return {
     day,
     hour,
@@ -363,7 +384,13 @@ function formatTime(ms) {
   };
 }
 
-// 执行子进程命令
+/**
+ * child_process.spawn的promise化
+ * @param {*} command
+ * @param {*} [args=[]]
+ * @param {*} [options={}]
+ * @returns
+ */
 function spawnPromise(command, args = [], options = {}) {
   return new Promise((resolve, reject) => {
     let stdout = '';
@@ -388,7 +415,8 @@ function spawnPromise(command, args = [], options = {}) {
       stderr = `${stderr}${data}`;
     });
 
-    commandSpawn.on('close', (code) => {
+    // https://stackoverflow.com/questions/37522010/difference-between-childprocess-close-exit-events
+    commandSpawn.on('exit', (code) => {
       resolve({
         stdout,
         stderr,
@@ -397,6 +425,42 @@ function spawnPromise(command, args = [], options = {}) {
     });
 
     commandSpawn.on('error', (error) => {
+      reject(error);
+    });
+  });
+}
+
+/**
+ * child_process.exec的promise化
+ * @param {*} command
+ * @param {*} [options={}]
+ * @returns
+ */
+function execPromise(command, options = {}) {
+  return new Promise((resolve, reject) => {
+    let stdout = '';
+    let stderr = '';
+
+    const commandExec = exec(command, Object.assign({}, options));
+
+    commandExec.stdout.on('data', (data) => {
+      stdout = `${stdout}${data}`;
+    });
+
+    commandExec.stderr.on('data', (data) => {
+      stderr = `${stderr}${data}`;
+    });
+
+    // https://stackoverflow.com/questions/37522010/difference-between-childprocess-close-exit-events
+    commandExec.on('exit', (code) => {
+      resolve({
+        stdout,
+        stderr,
+        code,
+      });
+    });
+
+    commandExec.on('error', (error) => {
       reject(error);
     });
   });

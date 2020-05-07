@@ -1,6 +1,5 @@
 {
   "activationEvents": [
-    "*",
     "onCommand:findUnused.find",
     "onCommand:findUnused.delete"
   ],
@@ -12,12 +11,12 @@
       {
         "category": "findUnused",
         "command": "findUnused.find",
-        "title": "查找未引用的文件"
+        "title": "查找未使用的静态资源文件"
       },
       {
         "category": "findUnused",
         "command": "findUnused.delete",
-        "title": "删除未引用的文件"
+        "title": "删除未使用的静态资源文件"
       }
     ],
     "configuration": {
@@ -33,7 +32,7 @@
             "sonar-project.properties",
             "unused.md"
           ],
-          "description": "The files and folders that you want to ignore when checking,add more types you need.",
+          "description": "查找时忽略的目录或文件",
           "type": "array"
         },
         "findUnused.static": {
@@ -56,7 +55,7 @@
             ".wav",
             ".webp"
           ],
-          "description": "The file types that is a statics file,add more types you need.",
+          "description": "需要检查的静态资源文件类型",
           "type": "array"
         },
         "findUnused.staticIn": {
@@ -76,11 +75,11 @@
             ".wxs",
             ".wxss"
           ],
-          "description": "The file types that the statics may in,add more types you need.",
+          "description": "引用静态资源的文件类型（即在这些文件内容中搜索静态资源的文件名，找到一个以上结果说明该静态资源被引用了）",
           "type": "array"
         }
       },
-      "title": "Find Unused configuration",
+      "title": "Find Unused配置",
       "type": "object"
     }
   },
@@ -89,7 +88,7 @@
     "fs-extra": "^9.0.0",
     "queue": "^6.0.1"
   },
-  "description": "Find unused static resource, and delete them. ",
+  "description": "查找项目中未使用的静态资源文件并删除它们",
   "devDependencies": {
     "@types/node": "^12.11.7",
     "@types/vscode": "^1.41.0"
@@ -102,5 +101,5 @@
   "name": "find-unused",
   "publisher": "wjf",
   "scripts": {},
-  "version": "0.0.6"
+  "version": "0.0.8"
 }
